@@ -11,6 +11,8 @@ DISCORD_PREFIX="!"
 DISCORD_RUNNING=0
 DISCORD_GATEWAY_URL=""
 DISCORD_GATEWAY_PID=""
+DISCORD_GATEWAY_FD_IN=""
+DISCORD_GATEWAY_FD_OUT=""
 DISCORD_GATEWAY_SEQ=""
 DISCORD_HEARTBEAT_INTERVAL=""
 
@@ -42,6 +44,25 @@ discord_gateway_url() {
     echo "$response" | jq -r '.url'
 }
 
+discord_gateway_open() {
+
+    local url
+
+    url=$(discord_gateway_url)
+    url="${url}/?v=10&encoding=json"
+
+    coproc DISCORD_GATEWAY {
+        websocat "$url"
+    }
+
+    DISCORD_GATEWAY_PID=$DISCORD_GATEWAY_PID
+
+    DISCORD_GATEWAY_FD_OUT=${DISCORD_GATEWAY[0]}
+    DISCORD_GATEWAY_FD_IN=${DISCORD_GATEWAY[1]}
+
+    discord_log "Gateway connected"
+}
+
 discord_gateway_connect() {
     command -v websocat >/dev/null || {
         discord_error "websocat is not installed"
@@ -54,80 +75,89 @@ discord_gateway_connect() {
     websocat "$url"
 }
 
+discord_gateway_send() {
+    local payload="$1"
+    printf '%s\n' "$payload" >&"${DISCORD_GATEWAY_FD_IN}"
+}
+
+discord_gateway_send() {
+    local payload="$1"
+    printf '%s\n' "$payload" >&"${DISCORD_GATEWAY_FD_IN}"
+}
+
 discord_gateway_run() {
 
-    local hello_received=0
+    discord_gateway_open
 
-    discord_gateway_connect | while read -r packet
+    while true
     do
+
+        packet=$(discord_gateway_receive)
+
+        [[ -z "$packet" ]] && continue
 
         echo "$packet"
 
-        local op
-
         op=$(echo "$packet" | jq -r '.op')
-
-        local seq
 
         seq=$(echo "$packet" | jq -r '.s')
 
         [[ "$seq" != "null" ]] && \
             DISCORD_GATEWAY_SEQ="$seq"
 
-        if [[ "$op" == "10" && "$hello_received" == "0" ]]
-        then
+        case "$op" in
 
-            hello_received=1
+            10)
 
-            DISCORD_HEARTBEAT_INTERVAL=$(
-                echo "$packet" |
-                jq -r '.d.heartbeat_interval'
-            )
+                DISCORD_HEARTBEAT_INTERVAL=$(
+                    echo "$packet" |
+                    jq -r '.d.heartbeat_interval'
+                )
 
-            discord_log \
-                "Heartbeat: ${DISCORD_HEARTBEAT_INTERVAL}ms"
+                discord_log \
+                    "Heartbeat interval: $DISCORD_HEARTBEAT_INTERVAL"
 
-            discord_gateway_identify
+                discord_gateway_identify
+                ;;
 
-        fi
+            11)
+
+                discord_log "Heartbeat ACK"
+                ;;
+
+        esac
 
     done
 }
 
 discord_gateway_identify() {
 
-    cat <<EOF
+    discord_gateway_send "$(cat <<EOF
 {
-    "op":2,
-    "d":{
-        "token":"$DISCORD_TOKEN",
-        "intents":513,
-        "properties":{
-            "os":"linux",
-            "browser":"discord.sh",
-            "device":"discord.sh"
-        }
+  "op":2,
+  "d":{
+    "token":"$DISCORD_TOKEN",
+    "intents":513,
+    "properties":{
+      "os":"linux",
+      "browser":"discord.sh",
+      "device":"discord.sh"
     }
+  }
 }
 EOF
+)"
 }
 
-discord_gateway_identify() {
+discord_gateway_send_heartbeat() {
 
-    cat <<EOF
+    discord_gateway_send "$(cat <<EOF
 {
-    "op":2,
-    "d":{
-        "token":"$DISCORD_TOKEN",
-        "intents":513,
-        "properties":{
-            "os":"linux",
-            "browser":"discord.sh",
-            "device":"discord.sh"
-        }
-    }
+  "op":1,
+  "d":$DISCORD_GATEWAY_SEQ
 }
 EOF
+)"
 }
 
 # ========================================
