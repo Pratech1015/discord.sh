@@ -77,6 +77,11 @@ discord_gateway_connect() {
 
 discord_gateway_send() {
     local payload="$1"
+    echo
+    echo "===== SENT ====="
+    echo "$payload"
+    echo "================"
+    echo
     printf '%s\n' "$payload" >&"${DISCORD_GATEWAY_FD_IN}"
 }
 
