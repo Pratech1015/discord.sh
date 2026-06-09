@@ -11,6 +11,8 @@ DISCORD_PREFIX="!"
 DISCORD_RUNNING=0
 DISCORD_GATEWAY_URL=""
 DISCORD_GATEWAY_PID=""
+DISCORD_GATEWAY_SEQ=""
+DISCORD_HEARTBEAT_INTERVAL=""
 
 declare -A DISCORD_COMMANDS
 declare -A DISCORD_COMMAND_DESCRIPTIONS
@@ -47,25 +49,85 @@ discord_gateway_connect() {
     }
     local url
     url=$(discord_gateway_url)
-    [[ -z "$url" ]] && {
-        discord_error "Failed to obtain gateway URL"
-        return 1
-    }
     url="${url}/?v=10&encoding=json"
     discord_log "Connecting to Gateway..."
     websocat "$url"
 }
 
-discord_gateway_listen() {
+discord_gateway_run() {
+
+    local hello_received=0
 
     discord_gateway_connect | while read -r packet
     do
-        echo
-        echo "========== GATEWAY =========="
+
         echo "$packet"
-        echo "============================="
-        echo
+
+        local op
+
+        op=$(echo "$packet" | jq -r '.op')
+
+        local seq
+
+        seq=$(echo "$packet" | jq -r '.s')
+
+        [[ "$seq" != "null" ]] && \
+            DISCORD_GATEWAY_SEQ="$seq"
+
+        if [[ "$op" == "10" && "$hello_received" == "0" ]]
+        then
+
+            hello_received=1
+
+            DISCORD_HEARTBEAT_INTERVAL=$(
+                echo "$packet" |
+                jq -r '.d.heartbeat_interval'
+            )
+
+            discord_log \
+                "Heartbeat: ${DISCORD_HEARTBEAT_INTERVAL}ms"
+
+            discord_gateway_identify
+
+        fi
+
     done
+}
+
+discord_gateway_identify() {
+
+    cat <<EOF
+{
+    "op":2,
+    "d":{
+        "token":"$DISCORD_TOKEN",
+        "intents":513,
+        "properties":{
+            "os":"linux",
+            "browser":"discord.sh",
+            "device":"discord.sh"
+        }
+    }
+}
+EOF
+}
+
+discord_gateway_identify() {
+
+    cat <<EOF
+{
+    "op":2,
+    "d":{
+        "token":"$DISCORD_TOKEN",
+        "intents":513,
+        "properties":{
+            "os":"linux",
+            "browser":"discord.sh",
+            "device":"discord.sh"
+        }
+    }
+}
+EOF
 }
 
 # ========================================
@@ -461,7 +523,7 @@ discord_run() {
         discord_builtin_help \
         "Shows available commands"
 
-    discord_log "discord.sh v0.4 running"
+    discord_log "Library Loaded"
 
     DISCORD_RUNNING=1
 
