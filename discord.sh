@@ -86,11 +86,10 @@ discord_gateway_send() {
 }
 
 discord_gateway_receive() {
+    local packet
     if IFS= read -r -t 5 packet <&"${DISCORD_GATEWAY_FD_OUT}"
     then
         echo "$packet"
-    else
-        echo "[gateway] timeout waiting for packet"
     fi
 }
 
@@ -105,6 +104,10 @@ discord_gateway_run() {
 
         [[ -z "$packet" ]] && continue
 
+        if [[ "${packet:0:1}" != "{" ]]
+        then
+            continue
+        fi
         echo "$packet"
 
         op=$(echo "$packet" | jq -r '.op')
