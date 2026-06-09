@@ -80,9 +80,9 @@ discord_gateway_send() {
     printf '%s\n' "$payload" >&"${DISCORD_GATEWAY_FD_IN}"
 }
 
-discord_gateway_send() {
-    local payload="$1"
-    printf '%s\n' "$payload" >&"${DISCORD_GATEWAY_FD_IN}"
+discord_gateway_receive() {
+    read -r packet <&"${DISCORD_GATEWAY_FD_OUT}"
+    echo "$packet"
 }
 
 discord_gateway_run() {
