@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 
 # ========================================
-# discord.sh v0.3
+# discord.sh v0.4
 # Discord Bot Library for Bash
 # ========================================
 
 DISCORD_API="https://discord.com/api/v10"
 DISCORD_TOKEN=""
 DISCORD_PREFIX="!"
+DISCORD_RUNNING=0
 
 declare -A DISCORD_COMMANDS
 declare -A DISCORD_COMMAND_DESCRIPTIONS
 declare -A DISCORD_EVENTS
+
+declare -A DISCORD_TASKS
+declare -A DISCORD_TASK_LAST_RUN
 
 # ========================================
 # LOGGING
@@ -111,17 +115,6 @@ discord_alias() {
     }
 }
 
-discord_help_text() {
-    local output="Available Commands:\n"
-
-    for cmd in "${!DISCORD_COMMANDS[@]}"
-    do
-        output+="${DISCORD_PREFIX}${cmd} - ${DISCORD_COMMAND_DESCRIPTIONS[$cmd]}\n"
-    done
-
-    echo -e "$output"
-}
-
 discord_execute_command() {
     local channel="$1"
     local content="$2"
@@ -139,6 +132,22 @@ discord_execute_command() {
     [[ -z "$handler" ]] && return
 
     "$handler" "$channel" "$args"
+}
+
+discord_help_text() {
+    local output="Available Commands:\n"
+
+    for cmd in "${!DISCORD_COMMANDS[@]}"
+    do
+        output+="${DISCORD_PREFIX}${cmd} - ${DISCORD_COMMAND_DESCRIPTIONS[$cmd]}\n"
+    done
+
+    echo -e "$output"
+}
+
+discord_builtin_help() {
+    local channel="$1"
+    discord_send "$channel" "$(discord_help_text)"
 }
 
 # ========================================
@@ -174,8 +183,8 @@ discord_send() {
 
     payload=$(
         jq -n \
-        --arg content "$message" \
-        '{content:$content}'
+            --arg content "$message" \
+            '{content:$content}'
     )
 
     discord_request POST "/channels/$channel/messages" "$payload"
@@ -194,8 +203,8 @@ discord_edit() {
 
     payload=$(
         jq -n \
-        --arg content "$content" \
-        '{content:$content}'
+            --arg content "$content" \
+            '{content:$content}'
     )
 
     discord_request \
@@ -206,11 +215,11 @@ discord_edit() {
 
 discord_delete() {
     local channel="$1"
-    local message="$2"
+    local message_id="$2"
 
     discord_request \
         DELETE \
-        "/channels/$channel/messages/$message"
+        "/channels/$channel/messages/$message_id"
 }
 
 # ========================================
@@ -226,16 +235,46 @@ discord_embed() {
 
     payload=$(
         jq -n \
-        --arg title "$title" \
-        --arg description "$description" \
-        '{
-            embeds: [
-                {
-                    title: $title,
-                    description: $description
-                }
-            ]
-        }'
+            --arg title "$title" \
+            --arg description "$description" \
+            '{
+                embeds: [
+                    {
+                        title: $title,
+                        description: $description
+                    }
+                ]
+            }'
+    )
+
+    discord_request \
+        POST \
+        "/channels/$channel/messages" \
+        "$payload"
+}
+
+discord_embed_color() {
+    local channel="$1"
+    local title="$2"
+    local description="$3"
+    local color="$4"
+
+    local payload
+
+    payload=$(
+        jq -n \
+            --arg title "$title" \
+            --arg description "$description" \
+            --argjson color "$color" \
+            '{
+                embeds: [
+                    {
+                        title: $title,
+                        description: $description,
+                        color: $color
+                    }
+                ]
+            }'
     )
 
     discord_request \
@@ -276,15 +315,7 @@ discord_send_file() {
 }
 
 # ========================================
-# CHANNELS
-# ========================================
-
-discord_channel() {
-    discord_request GET "/channels/$1"
-}
-
-# ========================================
-# USERS
+# USERS / GUILDS
 # ========================================
 
 discord_me() {
@@ -294,10 +325,6 @@ discord_me() {
 discord_user() {
     discord_request GET "/users/$1"
 }
-
-# ========================================
-# GUILDS
-# ========================================
 
 discord_guild() {
     discord_request GET "/guilds/$1"
@@ -321,20 +348,32 @@ discord_load_dir() {
 }
 
 # ========================================
-# TASKS
+# SCHEDULER
 # ========================================
 
 discord_interval() {
     local seconds="$1"
     local fn="$2"
 
-    (
-        while true
-        do
-            sleep "$seconds"
+    DISCORD_TASKS["$fn"]="$seconds"
+    DISCORD_TASK_LAST_RUN["$fn"]="0"
+}
+
+discord_scheduler_tick() {
+    local now
+    now=$(date +%s)
+
+    for fn in "${!DISCORD_TASKS[@]}"
+    do
+        local interval="${DISCORD_TASKS[$fn]}"
+        local last="${DISCORD_TASK_LAST_RUN[$fn]}"
+
+        if (( now - last >= interval ))
+        then
             "$fn"
-        done
-    ) &
+            DISCORD_TASK_LAST_RUN["$fn"]="$now"
+        fi
+    done
 }
 
 # ========================================
@@ -353,28 +392,47 @@ discord_ping() {
     echo $(((end - start) / 1000000))
 }
 
-# ========================================
-# BUILT-IN HELP COMMAND
-# ========================================
-
-discord_builtin_help() {
-    local channel="$1"
-
-    discord_send "$channel" "$(discord_help_text)"
+discord_version() {
+    echo "discord.sh bash library v0.4"
 }
 
 # ========================================
-# STARTUP
+# SHUTDOWN
+# ========================================
+
+discord_stop() {
+    DISCORD_RUNNING=0
+}
+
+discord_shutdown() {
+    discord_log "Shutting down..."
+    DISCORD_RUNNING=0
+}
+
+# ========================================
+# MAIN LOOP
 # ========================================
 
 discord_run() {
+
+    trap discord_shutdown INT TERM
 
     discord_command \
         help \
         discord_builtin_help \
         "Shows available commands"
 
-    discord_log "Library loaded"
+    discord_log "discord.sh v0.4 running"
+
+    DISCORD_RUNNING=1
 
     discord_emit ready
+
+    while (( DISCORD_RUNNING ))
+    do
+        discord_scheduler_tick
+        sleep 1
+    done
+
+    discord_log "Stopped"
 }
