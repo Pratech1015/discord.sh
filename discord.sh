@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ========================================
-# discord.sh v0.4
+# discord.sh v0.5
 # Discord Bot Library for Bash
 # ========================================
 
@@ -9,6 +9,8 @@ DISCORD_API="https://discord.com/api/v10"
 DISCORD_TOKEN=""
 DISCORD_PREFIX="!"
 DISCORD_RUNNING=0
+DISCORD_GATEWAY_URL=""
+DISCORD_GATEWAY_PID=""
 
 declare -A DISCORD_COMMANDS
 declare -A DISCORD_COMMAND_DESCRIPTIONS
@@ -27,6 +29,43 @@ discord_log() {
 
 discord_error() {
     echo "[discord.sh ERROR] $*" >&2
+}
+
+# ========================================
+# GATEWAY
+# ========================================
+discord_gateway_url() {
+    local response
+    response=$(discord_request GET "/gateway")
+    echo "$response" | jq -r '.url'
+}
+
+discord_gateway_connect() {
+    command -v websocat >/dev/null || {
+        discord_error "websocat is not installed"
+        return 1
+    }
+    local url
+    url=$(discord_gateway_url)
+    [[ -z "$url" ]] && {
+        discord_error "Failed to obtain gateway URL"
+        return 1
+    }
+    url="${url}/?v=10&encoding=json"
+    discord_log "Connecting to Gateway..."
+    websocat "$url"
+}
+
+discord_gateway_listen() {
+
+    discord_gateway_connect | while read -r packet
+    do
+        echo
+        echo "========== GATEWAY =========="
+        echo "$packet"
+        echo "============================="
+        echo
+    done
 }
 
 # ========================================
